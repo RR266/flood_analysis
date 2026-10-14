@@ -1,0 +1,8 @@
+﻿dam_type,dam_count,avg_height_m,total_storage_mcm
+Homogeneous Earthen Dam,3529,18.62,134861.59
+Zoned Earthen Dam,2332,18.86,61248.53
+Unknown,510,32.98,129767.93
+Earthfill (Embankment),161,21.94,15101.63
+Rockfill (Embankment),88,29.43,7965.85
+Cfrd (Concrete Face Rockfill Dam),15,43.06,1950.6
+Other,9,28.66,364.61

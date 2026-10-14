@@ -1,0 +1,51 @@
+﻿river_id,river_name,basin,sub_basin,length_km,dam_count,large_dam_count,total_storage_mcm,tallest_dam_m,dams_per_100km
+470,Penganga River,Godavari,Wardha,685.1,41,23,1527.86,46.19,5.985
+446,Manjra River,Godavari,Manjra,752.92,40,22,1752.85,47.72,5.313
+389,Godavari River,Godavari,Major River,1661.26,32,30,13088.07,72.5,1.926
+266,Bori,Krishna,Bhima Lower,139.55,29,11,137.03,35.2,20.781
+517,Manar,Godavari,Manjra,169.39,19,8,297.11,30.91,11.217
+499,Tirna,Godavari,Manjra,165.9,18,5,167.17,25.6,10.85
+162,Narmada River,Narmada,Major River,1393.88,16,14,27276.95,163.0,1.148
+277,Krishna River,Krishna,Major River,1416.93,16,15,22042.57,145.0,1.129
+9657,Girna,Tapi,Tapi Middle,336.94,16,12,815.74,54.56,4.749
+686,Tapi River,Tapi,Major River,778.8,15,14,8231.35,80.77,1.926
+261,Benithora,Krishna,Bhima Lower,153.54,15,3,207.92,31.11,9.769
+6149,Aran,Godavari,Wardha,226.1,14,3,129.46,19.57,6.192
+7951,Savla Nala,Godavari,Manjra,28.4,14,2,24.62,23.7,49.296
+4946,Sina,Krishna,Bhima Upper,333.33,13,4,231.78,36.0,3.9
+1568,Garganga,Ganga,Kali Sindh and others up to Confluence with Parbati,78.87,13,10,26.07,20.45,16.483
+1030,Mahi River,Mahi,Major River,553.42,12,10,3684.92,74.5,2.168
+1859,Newaj,Ganga,Kali Sindh and others up to Confluence with Parbati,251.34,12,9,635.87,48.05,4.774
+6157,Arunavati,Godavari,Wardha,115.52,12,11,224.09,29.58,10.388
+3488,Goi,Narmada,Narmada Middle,146.43,12,12,174.31,44.2,8.195
+3805,Man,Narmada,Narmada Middle,92.54,12,10,167.74,53.0,12.967
+8105,Tiru,Godavari,Manjra,71.64,12,6,49.87,20.79,16.75
+1684,Kali Sindh,Ganga,Kali Sindh and others up to Confluence with Parbati,403.14,11,7,882.98,54.05,2.729
+7811,Purna,Godavari,Godavari Middle,382.08,10,7,1537.23,44.91,2.617
+7988,Sindphana,Godavari,Godavari Middle,154.5,10,8,493.02,31.0,6.472
+1587,Ghorapachhar,Ganga,Kali Sindh and others up to Confluence with Parbati,52.33,10,8,42.36,25.105,19.109
+244,Tamrapani,Krishna,Krishna Upper,37.1,10,10,35.39,36.29,26.954
+251,Bhima River,Krishna,Major River,864.36,9,7,3703.27,56.4,1.041
+508,Wardha River,Godavari,Wardha,533.32,9,7,991.02,53.5,1.688
+8240,Wan,Godavari,Godavari Middle,90.41,9,8,99.02,26.5,9.955
+4628,Kasari,Krishna,Krishna Upper,78.94,9,9,91.72,44.84,11.401
+9848,Morna,Tapi,Tapi Upper,132.45,9,6,85.6,28.93,6.795
+26550,Lakundar,Ganga,Kali Sindh and others up to Confluence with Parbati,108.45,9,7,57.11,20.72,8.299
+7289,Kuni,Godavari,Wardha,86.01,9,5,56.64,23.78,10.464
+7363,Machill,Godavari,Godavari Middle,60.09,9,7,51.92,30.92,14.978
+182,Sabarmati,Sabarmati,Sabarmati Upper,406.16,9,5,48.27,35.4,2.216
+374,Devan,Godavari,Manjra,53.04,9,2,32.52,17.03,16.968
+8237,Waki Nala,Godavari,Manjra,30.7,9,4,27.96,20.0,29.316
+3787,Machna,Narmada,Narmada Upper,116.99,9,5,17.17,23.77,7.693
+6687,Galati,Godavari,Godavari Middle,38.73,9,6,16.7,21.6,23.238
+10291,Murbadi,West flowing rivers from Tapi to Tadri,Bhatsol and others,42.26,9,9,9.77,19.2,21.297
+1479,Chambal River,Ganga,Major River,987.75,8,6,10257.4,62.17,0.81
+2043,Betwa River,Ganga,Yamuna Lower,658.11,8,5,3016.83,45.72,1.216
+4742,Mula,Krishna,Bhima Upper,78.57,8,7,765.11,48.8,10.182
+27026,Mej,Ganga,Kali Sindh and others up to Confluence with Parbati,201.99,8,5,114.84,22.7,3.961
+733,Machkandi,West flowing rivers from Tapi to Tadri,Vasishti and others,78.61,8,7,37.98,61.87,10.177
+9551,Bori,Tapi,Tapi Middle,144.46,8,3,28.71,25.0,5.538
+10413,Ulhas,West flowing rivers from Tapi to Tadri,Bhatsol and others,145.93,8,7,24.91,43.0,5.482
+5049,Dabucha,Krishna,Bhima Upper,43.95,8,6,22.19,18.89,18.203
+2125,Siwana,Ganga,Chambal Upper,92.57,8,7,18.05,25.93,8.642
+1013,Satluj River,Indus (Up to border),Major River,670.03,7,7,10851.06,225.55,1.045
