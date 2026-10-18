@@ -1,0 +1,4 @@
+# Local secrets (Mapbox token) - see web/js/secrets.example.js
+web/js/secrets.js
+.env
+.env.*

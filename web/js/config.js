@@ -1,9 +1,8 @@
 // Site-wide settings. Edit here, not in the page modules.
 
-// Public Mapbox token (pk.*) - safe in client code; restrict its allowed URLs
-// in your Mapbox account before hosting this anywhere public.
-export const MAPBOX_TOKEN =
-  "pk.eyJ1IjoicmFodWxyYW1lc2gtMjAwMCIsImEiOiJjbXV3ZHU5dXcwMHl5Mnlvc3lmaG9qMjN2In0.0iK8grX9o5zhImrG2zXZTA";
+// Mapbox token lives in secrets.js, which is git-ignored. Copy secrets.example.js
+// to secrets.js and paste your token there.
+export { MAPBOX_TOKEN } from "./secrets.js";
 
 // Your "Dark 2D" style (Mapbox Standard, night preset). The theme toggle switches
 // its lightPreset between "night" and "day" instead of loading a second style.
