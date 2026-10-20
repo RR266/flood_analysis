@@ -37,6 +37,7 @@ export const getSummary = () => load("summary.json");
 
 // Vector-tile URL template for the river lines (absolute, as Mapbox requires).
 export const RIVER_TILES = `${location.origin}${location.pathname.replace(/[^/]*$/, "")}${DATA_URL}tiles/{z}/{x}/{y}.pbf`;
+export const RESERVOIR_TILES = RIVER_TILES.replace("tiles/", "reservoir_tiles/");
 
 export const getDams = () => load("dams.json", (raw) => {
   const list = fromColumnar(raw);

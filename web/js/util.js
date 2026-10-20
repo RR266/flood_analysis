@@ -41,6 +41,8 @@ export const fmt = {
   km: (v) => (v == null ? "-" : `${v >= 100 ? fComma(Math.round(v)) : fComma1(v)} km`),
   m: (v) => (v == null ? "-" : `${fComma1(v)} m`),
   mcm: (v) => (v == null ? "-" : `${v >= 100 ? fComma(Math.round(v)) : d3.format(",.2~f")(v)} MCM`),
+  // water-surface area: hectares for ponds, km² once it's a lake
+  area: (ha) => (ha == null ? "-" : ha >= 100 ? `${fComma1(ha / 100)} km²` : `${fComma(Math.round(ha))} ha`),
   year: (v) => (v == null ? "Unknown" : String(v)),
   pct: (v) => (v == null ? "-" : v > 0 && v < 0.005 ? "<1%" : `${Math.round(v * 100)}%`),
   ordinal: (p) => {

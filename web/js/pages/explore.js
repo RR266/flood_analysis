@@ -67,6 +67,7 @@ export async function render(root, route) {
           <button class="btn sm" type="button" data-layer="rivers" aria-pressed="true">${raw(icon("river"))} Rivers</button>
           <button class="btn sm" type="button" data-layer="flow" aria-pressed="true">${raw(icon("play"))} Flow</button>
           <button class="btn sm" type="button" data-layer="dams" aria-pressed="true">${raw(icon("dam"))} Dams</button>
+          <button class="btn sm" type="button" data-layer="reservoirs" aria-pressed="true">${raw(icon("storage"))} Reservoirs</button>
           <button class="btn sm" type="button" id="fit">${raw(icon("fit"))} Fit to results</button>
         </div>
         <details class="map-legend" open>
@@ -74,6 +75,7 @@ export async function render(root, route) {
           <div class="legend-rows">
           <div class="row"><span class="line"></span>River (thicker = longer)</div>
           <div class="row"><span class="flow"></span>Flow direction, source → mouth</div>
+          <div class="row"><span class="water"></span>Reservoir (zoom in for small ones)</div>
           ${["Irrigation", "Hydropower", "Water Supply", "Other"].map((p) => html`<div class="row"><img src="${damBadgeURL(purposeGroup(p).slug)}" alt="">${p === "Other" ? "Other purpose dam" : `${p} dam`}</div>`)}
           <div class="row"><img src="${endpointBadgeURL("source")}" alt="">River source</div>
           <div class="row"><img src="${endpointBadgeURL("mouth")}" alt="">Mouth / confluence</div>
@@ -109,7 +111,7 @@ export async function render(root, route) {
 
   // ---------------------------------------------------------------- map
   const mapCtl = createMap($("#explore-map"), {
-    rivers: true, dams: dams.list,
+    rivers: true, dams: dams.list, reservoirs: true,
     damLookup: (id) => dams.byId.get(id),
     riverLookup: (id) => rivers.byId.get(id),
     onDamClick: (d) => selectDam(d),

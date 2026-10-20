@@ -2,3 +2,4 @@
 web/js/secrets.js
 .env
 .env.*
+Data Source/reservoir/Reservoir.shp

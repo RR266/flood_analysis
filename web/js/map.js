@@ -3,8 +3,8 @@
 import { MAPBOX_TOKEN, MAP_STYLE, LIGHT_PRESET, INDIA_VIEW, FLOW_MIN_LENGTH_KM, INDIA_BOUNDS } from "./config.js";
 import { isDark, prefersReducedMotion, html } from "./util.js";
 import { damBadgeURL, endpointBadgeURL, loadImage } from "./icons.js";
-import { damsToGeoJSON, RIVER_TILES } from "./data.js";
-import { showTooltip, moveTooltip, hideTooltip, damTooltip, riverTooltip, ttRows } from "./tooltip.js";
+import { damsToGeoJSON, RIVER_TILES, RESERVOIR_TILES } from "./data.js";
+import { showTooltip, moveTooltip, hideTooltip, damTooltip, riverTooltip, reservoirTooltip, ttRows } from "./tooltip.js";
 
 const mapboxgl = window.mapboxgl;
 const DAM_SLUGS = ["irrigation", "hydropower", "water-supply", "other"];
@@ -49,8 +49,10 @@ function flowImage(isOn) {
 
 const palette = () => (isDark()
   ? { river: "#5598e7", riverHover: "#cde2fb", highlight: "#86b6ef",
+      resFill: "#3987e5", resLine: "#86b6ef", resHover: "#cde2fb",
       cluster: "#3987e5", clusterRing: "#1a1a19", clusterText: "#ffffff", halo: "#ffffff", label: "#ffffff", labelHalo: "#0d0d0d" }
   : { river: "#2a78d6", riverHover: "#104281", highlight: "#104281",
+      resFill: "#5aa0e8", resLine: "#2a78d6", resHover: "#104281",
       cluster: "#2a78d6", clusterRing: "#ffffff", clusterText: "#ffffff", halo: "#0b0b0b", label: "#0b0b0b", labelHalo: "#ffffff" });
 
 // Rivers are drawn as three size tiers with constant styling. Per-feature (data-driven)
@@ -67,6 +69,7 @@ const withFilter = (base, expr) => (expr ? ["all", base, expr] : base);
 /**
  * opts: {
  *   rivers: bool (draw the river vector tiles), riverFilter: expression, dams: dam[] | null, cluster: bool, interactive: bool, scrollZoom: bool,
+ *   reservoirs: bool (draw reservoir polygons under the rivers), onReservoirClick(props),
  *   flow: bool, flowMin: km (rivers at least this long animate), view: {center, zoom} | bounds: [[w,s],[e,n]],
  *   riverLookup(id) -> river record, damLookup(id) -> dam,
  *   onDamClick(dam), onRiverClick(props), compact: bool (smaller controls)
@@ -95,7 +98,7 @@ export function createMap(container, opts = {}) {
 
   const state = {
     flowOn: opts.flow !== false && !prefersReducedMotion(),
-    hoverRiver: null, selectedRiver: null,
+    hoverRiver: null, hoverReservoir: null, selectedRiver: null,
     flowFilter: ["any", ["get", "major"], [">=", ["get", "len"], opts.flowMin ?? FLOW_MIN_LENGTH_KM]],
   };
 
@@ -118,6 +121,23 @@ export function createMap(container, opts = {}) {
 
   function addLayers() {
     const c = palette();
+    // Reservoirs first so the rivers draw across them.
+    if (opts.reservoirs) {
+      map.addSource("reservoirs", { type: "vector", tiles: [RESERVOIR_TILES], minzoom: 3, maxzoom: 10, bounds: INDIA_BOUNDS.flat() });
+      const RL = "reservoirs";
+      map.addLayer({
+        id: "reservoirs-fill", type: "fill", source: "reservoirs", "source-layer": RL, slot: "middle",
+        paint: { "fill-emissive-strength": 1, "fill-color": c.resFill, "fill-opacity": isDark() ? 0.45 : 0.5 },
+      });
+      map.addLayer({
+        id: "reservoirs-outline", type: "line", source: "reservoirs", "source-layer": RL, slot: "middle", minzoom: 7,
+        paint: { "line-emissive-strength": 1, "line-color": c.resLine, "line-width": 0.8, "line-opacity": 0.8 },
+      });
+      map.addLayer({
+        id: "reservoirs-hover", type: "line", source: "reservoirs", "source-layer": RL, slot: "middle", filter: ["==", ["get", "id"], -1],
+        paint: { "line-emissive-strength": 1, "line-color": c.resHover, "line-width": 2.5 },
+      });
+    }
     if (opts.rivers) {
       // Vector tiles built from the full shapefile geometry (see build_web_data.py).
       map.addSource("rivers", { type: "vector", tiles: [RIVER_TILES], minzoom: 2, maxzoom: 10, bounds: INDIA_BOUNDS.flat() });
@@ -217,6 +237,12 @@ export function createMap(container, opts = {}) {
       map.setPaintProperty("rivers-hover", "line-color", c.riverHover);
       map.setPaintProperty("rivers-highlight", "line-color", c.highlight);
     }
+    if (map.getLayer("reservoirs-fill")) {
+      map.setPaintProperty("reservoirs-fill", "fill-color", c.resFill);
+      map.setPaintProperty("reservoirs-fill", "fill-opacity", isDark() ? 0.45 : 0.5);
+      map.setPaintProperty("reservoirs-outline", "line-color", c.resLine);
+      map.setPaintProperty("reservoirs-hover", "line-color", c.resHover);
+    }
     if (map.getLayer("dam-clusters")) {
       map.setPaintProperty("dam-clusters", "circle-color", c.cluster);
       map.setPaintProperty("dam-clusters", "circle-stroke-color", c.clusterRing);
@@ -234,9 +260,15 @@ export function createMap(container, opts = {}) {
     map.setFilter("rivers-hover", ["==", ["get", "id"], id ?? -1]);
   }
 
+  function setHoverReservoir(id) {
+    if (state.hoverReservoir === id || !map.getLayer("reservoirs-hover")) return;
+    state.hoverReservoir = id;
+    map.setFilter("reservoirs-hover", ["==", ["get", "id"], id ?? -1]);
+  }
+
   function bindEvents() {
-    const layers = ["dam-icons", "dam-clusters", "rivers-hit"].filter((l) => map.getLayer(l));
-    // Dams beat clusters beat rivers when several are under the pointer.
+    const layers = ["dam-icons", "dam-clusters", "rivers-hit", "reservoirs-fill"].filter((l) => map.getLayer(l));
+    // Dams beat clusters beat rivers beat reservoirs when several are under the pointer.
     const pick = (point) => {
       const hits = map.queryRenderedFeatures(point, { layers });
       return layers.map((l) => hits.find((h) => h.layer.id === l)).find(Boolean);
@@ -244,9 +276,14 @@ export function createMap(container, opts = {}) {
     map.on("mousemove", (e) => {
       const f = pick(e.point);
       const evt = e.originalEvent;
-      if (!f) { setHoverRiver(null); hideTooltip(); map.getCanvas().style.cursor = ""; return; }
+      if (!f) { setHoverRiver(null); setHoverReservoir(null); hideTooltip(); map.getCanvas().style.cursor = ""; return; }
       map.getCanvas().style.cursor = "pointer";
-      if (f.layer.id === "dam-icons") {
+      if (f.layer.id !== "reservoirs-fill") setHoverReservoir(null);
+      if (f.layer.id === "reservoirs-fill") {
+        setHoverRiver(null);
+        setHoverReservoir(f.properties.id);
+        showTooltip(evt, reservoirTooltip(f.properties));
+      } else if (f.layer.id === "dam-icons") {
         setHoverRiver(null);
         const d = opts.damLookup?.(f.properties.id);
         if (d) showTooltip(evt, damTooltip(d));
@@ -260,7 +297,7 @@ export function createMap(container, opts = {}) {
       }
       moveTooltip(evt);
     });
-    map.getCanvas().addEventListener("mouseleave", () => { setHoverRiver(null); hideTooltip(); });
+    map.getCanvas().addEventListener("mouseleave", () => { setHoverRiver(null); setHoverReservoir(null); hideTooltip(); });
 
     map.on("click", (e) => {
       const f = pick(e.point);
@@ -273,6 +310,10 @@ export function createMap(container, opts = {}) {
       } else if (f.layer.id === "dam-icons") {
         const d = opts.damLookup?.(f.properties.id);
         if (d) opts.onDamClick?.(d);
+      } else if (f.layer.id === "reservoirs-fill") {
+        // default: open the dam that holds the reservoir back
+        if (opts.onReservoirClick) opts.onReservoirClick(f.properties);
+        else { const d = opts.damLookup?.(f.properties.dam); if (d) opts.onDamClick?.(d); }
       } else {
         opts.onRiverClick?.(f.properties);
       }
@@ -315,7 +356,8 @@ export function createMap(container, opts = {}) {
       });
     },
     setVisible(group, on) {
-      const ids = { rivers: [...TIERS.map(tierLayer), "rivers-hit", "rivers-hover"], dams: ["dam-clusters", "dam-cluster-count", "dam-icons", "dam-selected"] }[group];
+      const ids = { rivers: [...TIERS.map(tierLayer), "rivers-hit", "rivers-hover"], dams: ["dam-clusters", "dam-cluster-count", "dam-icons", "dam-selected"],
+        reservoirs: ["reservoirs-fill", "reservoirs-outline", "reservoirs-hover"] }[group];
       ready.then(() => ids.forEach((id) => map.getLayer(id) && map.setLayoutProperty(id, "visibility", on ? "visible" : "none")));
     },
     /** river: full river record (with start/end coords) or null */

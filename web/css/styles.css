@@ -403,6 +403,7 @@ details.map-legend:not([open]) summary::after { content: "▸"; }
 .map-legend .line { width: 22px; height: 3px; border-radius: 2px; background: var(--series-1); }
 .map-legend .flow { width: 22px; height: 4px; border-radius: 2px; background: linear-gradient(90deg, var(--series-1) 10%, #e8f1fd 75%, var(--series-1) 80%); }
 .map-legend .title { font-weight: 600; color: var(--text-primary); }
+.map-legend .water { width: 18px; height: 12px; border-radius: 4px; background: color-mix(in srgb, var(--series-1) 50%, transparent); border: 1px solid var(--series-1); }
 
 .side-panel { display: grid; gap: 16px; }
 .selection-card { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-wash); }

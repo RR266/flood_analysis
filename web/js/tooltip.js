@@ -64,6 +64,21 @@ export function damTooltip(d) {
     <div class="tt-foot">Click for the short profile</div>`;
 }
 
+export function reservoirTooltip(p) {
+  // p = reservoir tile properties (see build_web_data.build_reservoir_tiles)
+  return html`
+    <div class="tt-head"><div><div class="tt-title">${p.name || "Unnamed reservoir"}</div>
+      <div class="tt-sub">${[p.river, p.state].filter(Boolean).join(" · ")}</div></div></div>
+    ${ttRows([
+      { label: "Water surface", value: fmt.area(p.area) },
+      { label: "Gross storage", value: p.storage != null ? fmt.mcm(p.storage) : "Not recorded", color: "var(--series-other)" },
+      ...(p.depth != null ? [{ label: "Average depth", value: fmt.m(p.depth), color: "var(--series-other)" }] : []),
+      { label: p.dams > 1 ? `Dams (${p.dams})` : "Dam", value: p.dam_name || "-", color: "var(--series-other)" },
+      { label: "Completed", value: fmt.year(p.year), color: "var(--series-other)" },
+    ])}
+    <div class="tt-foot">Click for the dam's profile</div>`;
+}
+
 export function riverTooltip(p, extra = {}) {
   // p = map feature properties {id,name,basin,len,dams}; extra = full river record (optional)
   const r = extra;

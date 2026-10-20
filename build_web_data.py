@@ -6,14 +6,14 @@ Build the JSON / GeoJSON files the dashboard website (web/) reads.
 Reuses the cleaning + spatial join from main.py, then writes web/data/:
     tiles/{z}/{x}/{y}.pbf  river lines as Mapbox vector tiles (zoom 2-10) built from the full
                      shapefile geometry, each line oriented source -> mouth for the flow animation
+    reservoir_tiles/{z}/{x}/{y}.pbf  reservoir polygons (zoom 3-10), small ones only when zoomed in
     rivers.json      river attributes (+ bounding box) for search, filters and profiles (columnar)
-    dams.json        dam attributes + percentiles used by tooltips (columnar)
-    summary.json     pre-aggregated numbers for the Overview page
+    dams.json        dam attributes + percentiles used by tooltips (columnar), incl. the dam's reservoir
+    summary.json     pre-aggregated numbers for the Overview page (incl. a "reservoirs" block)
 """
 
 import json
 import math
-import shutil
 import time
 
 import geopandas as gpd
@@ -33,6 +33,10 @@ EXTENT = 4096                # tile coordinate grid
 BUFFER = 64                  # tile units of overlap so lines don't show seams at tile edges
 # Short rivers are left out of the most zoomed-out tiles, where they'd be sub-pixel anyway.
 MIN_LEN_KM = {2: 100, 3: 50, 4: 20, 5: 8}
+RES_TILE_DIR = WEB_DATA / "reservoir_tiles"
+RES_TILE_ZOOMS = range(3, 11)
+# Smallest reservoir drawn at each zoom (a 100 ha lake is ~1 pixel at zoom 6).
+MIN_AREA_HA = {3: 5000, 4: 2000, 5: 500, 6: 100, 7: 25}
 ORIGIN = 20037508.342789244  # web-mercator half-width
 
 PURPOSE_GROUPS = ["Irrigation", "Hydropower", "Water Supply"]  # everything else -> "Other"
@@ -109,23 +113,49 @@ def tile_bounds(z, x, y):
 
 def build_tiles(geo: gpd.GeoDataFrame) -> int:
     """Write web-mercator vector tiles (layer "rivers") for every zoom in TILE_ZOOMS."""
-    merc = geo.to_crs("EPSG:3857")
     props = [{k: v for k, v in {
         "id": int(r.river_id), "name": clean(r.river_name), "basin": clean(r.basin),
         "len": clean(r.length_km), "dams": int(r.dam_count), "major": bool(r.is_major_river),
-    }.items() if v is not None} for r in merc.itertuples(index=False)]
-    lengths = merc["length_km"].fillna(0).to_numpy()
+    }.items() if v is not None} for r in geo.itertuples(index=False)]
+    return write_tiles(geo, props, "rivers", TILE_DIR, geo["length_km"].fillna(0).to_numpy(), MIN_LEN_KM)
+
+
+def build_reservoir_tiles(dim_reservoir: pd.DataFrame) -> int:
+    """Reservoir polygons as their own tile set (layer "reservoirs"), so they rebuild independently."""
+    shp = gpd.read_file(main.RESERVOIR_PATH, engine="pyogrio")[["geometry"]]
+    # same row order as main.clean_reservoirs, which numbers reservoirs 1..n
+    shp["reservoir_id"] = np.arange(1, len(shp) + 1)
+    geo = shp.merge(dim_reservoir, on="reservoir_id")
+    geo["geometry"] = geo.geometry.buffer(0)  # repair the self-intersecting polygons
+    props = [{k: v for k, v in {
+        "id": int(r.reservoir_id), "name": clean(r.reservoir_name), "area": clean(r.area_ha),
+        "storage": clean(r.storage_mcm), "depth": clean(r.mean_depth_m), "state": clean(r.state),
+        "basin": clean(r.basin), "river": clean(r.nearest_river), "dams": int(r.dam_count),
+        "dam": clean(r.primary_dam_id), "dam_name": clean(r.primary_dam_name),
+        "year": clean(r.first_completion_year),
+    }.items() if v is not None} for r in geo.itertuples(index=False)]
+    return write_tiles(geo, props, "reservoirs", RES_TILE_DIR, geo["area_ha"].to_numpy(), MIN_AREA_HA,
+                       zooms=RES_TILE_ZOOMS, polygons=True)
+
+
+def write_tiles(geo, props, layer, out_dir, sizes, min_size, zooms=TILE_ZOOMS, polygons=False) -> int:
+    """Write web-mercator vector tiles for one layer. Features with sizes[i] < min_size[z] are
+    left out at zoom z, where they would be sub-pixel anyway."""
+    merc = geo.to_crs("EPSG:3857")
     geoms = merc.geometry.to_numpy()
     minx, miny, maxx, maxy = merc.total_bounds
 
-    if TILE_DIR.exists():
-        shutil.rmtree(TILE_DIR)
+    # Delete old tiles file by file: OneDrive often refuses to remove the folders themselves,
+    # and empty folders are harmless.
+    for old in out_dir.rglob("*.pbf"):
+        old.unlink()
     written = 0
-    for z in TILE_ZOOMS:
+    for z in zooms:
         t0 = time.time()
         size = 2 * ORIGIN / 2 ** z
-        keep = np.where(lengths >= MIN_LEN_KM.get(z, 0))[0]
-        simple = shapely.simplify(geoms[keep], size / EXTENT, preserve_topology=False)  # ~1 tile unit
+        keep = np.where(sizes >= min_size.get(z, 0))[0]
+        # ~1 tile unit; polygons keep their topology so small reservoirs don't collapse
+        simple = shapely.simplify(geoms[keep], size / EXTENT, preserve_topology=polygons)
         tree = shapely.STRtree(simple)
         buf = size * BUFFER / EXTENT
         x0, x1 = int((minx + ORIGIN) // size), int((maxx + ORIGIN) // size)
@@ -143,14 +173,14 @@ def build_tiles(geo: gpd.GeoDataFrame) -> int:
                 if not feats:
                     continue
                 data = mapbox_vector_tile.encode(
-                    [{"name": "rivers", "features": feats}],
+                    [{"name": layer, "features": feats}],
                     default_options={"quantize_bounds": (bx0, by0, bx1, by1), "extents": EXTENT})
-                out = TILE_DIR / str(z) / str(x) / f"{y}.pbf"
+                out = out_dir / str(z) / str(x) / f"{y}.pbf"
                 out.parent.mkdir(parents=True, exist_ok=True)
                 out.write_bytes(data)
                 n += 1
         written += n
-        print(f"  tiles z{z:<2} {n:>5} tiles  ({time.time() - t0:.1f}s)")
+        print(f"  {layer} z{z:<2} {n:>5} tiles  ({time.time() - t0:.1f}s)")
     return written
 
 
@@ -184,16 +214,40 @@ def build_dams(fact_dam: pd.DataFrame) -> list:
             "storage_suspect", "spillway_capacity_cumecs", "length_m", "dam_type", "purpose",
             "primary_purpose", "purpose_group", "is_multipurpose", "height_class", "is_large_dam",
             "storage_class", "latitude", "longitude", "latitude_dms", "longitude_dms",
-            "height_pct", "storage_pct", "length_pct", "spillway_pct"]
+            "height_pct", "storage_pct", "length_pct", "spillway_pct",
+            "reservoir_id", "reservoir_name", "reservoir_area_ha"]
     rows = records(d[cols].rename(columns={"dam_id": "id", "dam_name": "name"}))
     for row in rows:
         row["purposes"] = [p.strip() for p in (row["purpose"] or "").split("/") if p.strip()]
     return rows
 
 
+def build_reservoir_summary(t: dict) -> dict:
+    res = t["dim_reservoir"]
+    big = res.nlargest(max(1, len(res) // 100), "area_ha")
+    return {
+        "kpis": {
+            "reservoir_count": len(res),
+            "area_km2": round(float(res["area_km2"].sum())),
+            "median_area_ha": round(float(res["area_ha"].median()), 1),
+            "multi_dam_reservoirs": int((res["dam_count"] > 1).sum()),
+            "top1pct_area_share": round(float(big["area_km2"].sum() / res["area_km2"].sum() * 100), 1),
+            "median_mean_depth_m": round(float(res["mean_depth_m"].median()), 1),
+            "depth_suspect": int(res["depth_suspect"].sum()),
+            "dams_without_reservoir": int((~t["fact_dam"]["has_reservoir_polygon"]).sum()),
+        },
+        "size_classes": records(t["reservoir_size_summary"]),
+        "largest": records(t["top_reservoirs"].head(10)),
+        "basins": records(t["basin_summary"].sort_values("reservoir_area_km2", ascending=False)
+                          [["basin", "reservoir_count", "reservoir_area_km2", "pct_of_reservoir_area",
+                            "median_reservoir_ha"]]),
+    }
+
+
 def build_summary(t: dict) -> dict:
     r, d = t["dim_river"], t["fact_dam"]
     return {
+        "reservoirs": build_reservoir_summary(t),
         "kpis": {
             "river_count": len(r),
             "river_length_km": round(float(r["length_km"].sum())),
@@ -250,6 +304,8 @@ if __name__ == "__main__":
     print("Writing vector tiles...")
     total = build_tiles(geo)
     print(f"  {total:,} tiles -> {TILE_DIR}")
+    total = build_reservoir_tiles(main.dim_reservoir)
+    print(f"  {total:,} tiles -> {RES_TILE_DIR}")
     print("Writing web data...")
     write("rivers.json", columnar(build_rivers(main.dim_river, river_bboxes(geo))))
     write("dams.json", columnar(build_dams(main.fact_dam)))

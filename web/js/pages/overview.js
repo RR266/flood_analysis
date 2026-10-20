@@ -20,6 +20,11 @@ export async function render(root) {
   const irrig = s.purposes.find((p) => p.purpose === "Irrigation");
   const topState = s.states[0];
   const storageBcm = k.storage_mcm / 1000;
+  const res = s.reservoirs, rk = res.kpis;
+  const small = res.size_classes.filter((c) => ["<10 ha", "10-50 ha", "50-100 ha"].includes(c.area_class));
+  const smallShare = small.reduce((t, c) => t + c.pct_of_reservoirs, 0) / 100;
+  const smallArea = small.reduce((t, c) => t + c.pct_of_area, 0) / 100;
+  const topResBasins = res.basins.slice(0, 3);
 
   mount(root, html`
   <div class="page container">
@@ -67,6 +72,7 @@ export async function render(root) {
               <button type="button" data-m="dams_per_1000km" aria-pressed="false">Per 1,000 km</button>
               <button type="button" data-m="total_river_length_km" aria-pressed="false">River km</button>
               <button type="button" data-m="total_storage_mcm" aria-pressed="false">Storage</button>
+              <button type="button" data-m="reservoir_area_km2" aria-pressed="false">Water surface</button>
             </div>
           </div>
         </div>
@@ -133,7 +139,31 @@ export async function render(root) {
       </div>
     </div>
 
-    ${story(5, "The most dammed rivers",
+    ${story(5, "The water behind the dams",
+      `${fmt.int(rk.reservoir_count)} mapped reservoirs cover ${fmt.int(rk.area_km2)} km². Most are small irrigation tanks, but a handful of giants hold most of the water surface.`)}
+    <section class="grid g-3 kpi-row" aria-label="Reservoir figures">
+      ${stat("storage", "Reservoir water surface", html`${fmt.int(rk.area_km2)}<small>km²</small>`, `${fmt.int(rk.reservoir_count)} reservoirs · median ${fmt.area(rk.median_area_ha)}`)}
+      ${stat("target", "Held by the largest 1%", `${Math.round(rk.top1pct_area_share)}%`, `of all reservoir area, in ${fmt.int(Math.max(1, Math.floor(rk.reservoir_count / 100)))} reservoirs`, rk.top1pct_area_share / 100)}
+      ${stat("height", "Typical average depth", fmt.m(rk.median_mean_depth_m), "Storage ÷ surface area: wide and shallow")}
+    </section>
+    <div class="grid g-3">
+      <div class="card span-2" id="ressize-card">
+        <div class="card-head"><div><h3>Share of water surface by reservoir size</h3><p>Hover a bar to compare with the share of reservoirs in that size band</p></div><div class="card-actions"></div></div>
+        <div class="chart" id="ressize-chart"></div>
+        <div class="insight">${raw(icon("info"))}<span>Reservoirs under 100 ha are <strong>${fmt.pct(smallShare)}</strong> of the total
+          but only <strong>${fmt.pct(smallArea)}</strong> of the water surface.
+          ${topResBasins.map((b) => b.basin).join(", ")} together hold
+          <strong>${Math.round(topResBasins.reduce((t, b) => t + b.pct_of_reservoir_area, 0))}%</strong> of it.</span></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div><h3>Largest by water surface</h3><p>Open the dam that holds it back</p></div></div>
+        <ol class="rank-list">${res.largest.slice(0, 6).map((r) => html`<li><a href="${damHref(r.primary_dam_id)}">
+          <span><span class="name">${r.reservoir_name}</span><span class="meta">${r.nearest_river || "-"} · ${r.state}</span></span>
+          <span class="num">${fmt.area(r.area_km2 * 100)}<small>${r.mean_depth_m != null ? `${fmt.num1(r.mean_depth_m)} m deep` : fmt.year(r.first_completion_year)}</small></span></a></li>`)}</ol>
+      </div>
+    </div>
+
+    ${story(6, "The most dammed rivers",
       "These rivers have the most dams within 5 km of their course. Open one to see each dam in order and when it was built.")}
     <div class="grid g-2">
       <div class="card" id="dammed-card">
@@ -149,6 +179,9 @@ export async function render(root) {
             They are left out of storage totals.</li>
           <li>Completion years of 0 and water levels above 9,000 m were treated as missing.</li>
           <li>River lengths come from the source shapefile. Map lines are simplified to 250 m for speed.</li>
+          <li>Reservoir outlines are from the <a href="https://nwdp.nwic.gov.in/dataset/reservoir" target="_blank" rel="noopener">NWIC reservoir layer</a>.
+            Depth is storage ÷ surface area; <strong>${fmt.int(rk.depth_suspect)}</strong> outlines would be deeper than their dam
+            (partial outlines or unfilled reservoirs) and are left out of depth figures.</li>
         </ul>
       </div>
     </div>
@@ -166,6 +199,7 @@ export async function render(root) {
     dams_per_1000km: { title: "Dam density by basin", sub: "Dams per 1,000 km of mapped river", f: fmt.num1, name: "Dams per 1,000 km" },
     total_river_length_km: { title: "River length by basin", sub: "Total length of mapped river reaches", f: fmt.km, name: "River length" },
     total_storage_mcm: { title: "Storage by basin", sub: "Gross storage of dams in each basin", f: fmt.mcm, name: "Gross storage" },
+    reservoir_area_km2: { title: "Reservoir water surface by basin", sub: "Area of mapped reservoirs in each basin", f: (v) => fmt.area(v * 100), name: "Water surface" },
   };
   let basinCleanup = null;
   const basinCard = root.querySelector("#basin-card");
@@ -236,6 +270,18 @@ export async function render(root) {
     onClick: (d) => { location.hash = `#/explore?height=${encodeURIComponent(d.label)}`; } }));
   tableToggle(root.querySelector("#height-card"), root.querySelector("#height-chart"),
     [{ key: "label", label: "Height" }, { key: "value", label: "Dams", num: true, format: fmt.int }], heights);
+
+  const sizes = res.size_classes.map((c) => ({
+    label: c.area_class, value: c.pct_of_area / 100,
+    extra: [{ label: "Share of reservoirs", value: fmt.pct(c.pct_of_reservoirs / 100), color: "var(--series-other)" },
+            { label: "Reservoirs", value: fmt.int(c.reservoir_count), color: "var(--series-other)" },
+            { label: "Water surface", value: fmt.area(c.total_area_km2 * 100), color: "var(--series-other)" }],
+  }));
+  cleanups.push(hbar(root.querySelector("#ressize-chart"), sizes, { format: fmt.pct, valueName: "Share of water surface", labelWidth: 130, ariaLabel: "Share of reservoir water surface by size band" }));
+  tableToggle(root.querySelector("#ressize-card"), root.querySelector("#ressize-chart"),
+    [{ key: "area_class", label: "Size" }, { key: "reservoir_count", label: "Reservoirs", num: true, format: fmt.int },
+     { key: "pct_of_reservoirs", label: "% of reservoirs", num: true, format: fmt.num1 },
+     { key: "pct_of_area", label: "% of area", num: true, format: fmt.num1 }], res.size_classes);
 
   const dammed = s.top_dammed_rivers.map((r) => ({
     label: r.river_name, value: r.dam_count, href: riverHref(r.river_id), sub: `${r.basin} › ${r.sub_basin}`,

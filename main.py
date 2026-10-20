@@ -4,10 +4,13 @@ Indian Rivers & Dams analysis -> Power BI ready tables.
 Inputs  (Data Source/):
     river_network_shape/River_Network.shp   30k river reaches (Lambert Conformal Conic, metres)
     dam.geojson                             6.6k dams (same LCC coordinates, despite the file saying WGS84)
+    reservoir/Reservoir.shp                 6.2k reservoir polygons (same LCC), area in hectares,
+                                            PIC = dam code(s); several dams can hold one reservoir
+                                            Source: https://nwdp.nwic.gov.in/dataset/reservoir
 
 Outputs (Output/):
     CSV + Parquet for every table below (Power BI: Get Data > Text/CSV or Parquet),
-    plus a simplified rivers GeoJSON (WGS84) for map visuals (Icon Map / Azure Maps).
+    plus simplified rivers / reservoirs GeoJSON (WGS84) for map visuals (Icon Map / Azure Maps).
 
 Run standalone:      python main.py
 Run inside Power BI: Get Data > Python script, paste (only this line holds a path):
@@ -62,10 +65,18 @@ DATA_DIR = BASE_DIR / "Data Source"
 OUT_DIR = BASE_DIR / "Output"
 RIVER_PATH = DATA_DIR / "river_network_shape" / "River_Network.shp"
 DAM_PATH = DATA_DIR / "dam.geojson"
+RESERVOIR_PATH = DATA_DIR / "reservoir" / "Reservoir.shp"
 
 WGS84 = "EPSG:4326"
 MAX_SNAP_DISTANCE_M = 5_000      # a dam further than this from any mapped river is "unmatched"
 LARGE_DAM_HEIGHT_M = 15          # ICOLD definition of a large dam
+# Mean depth = storage / area. Deeper than the dam is tall, or than this when the height is
+# unknown, means the polygon is a fragment / unfilled reservoir (e.g. Polavaram: 4 ha, 5,511 MCM).
+MAX_PLAUSIBLE_MEAN_DEPTH_M = 150
+WKT_MAX_CHARS = 32_766           # Power BI text column limit
+# Reservoir basin spellings -> the river network's, so both join on basin.
+BASIN_FIXES = {"Brahamaputra": "Brahmaputra",
+               "Drainage area of Andaman & Nicobar Islands": "Drainage Area of Andaman & Nicobar Islands"}
 
 
 # --------------------------------------------------------------------------- load
@@ -83,6 +94,13 @@ def load_dams(river_crs) -> gpd.GeoDataFrame:
         dams = dams.set_crs(river_crs, allow_override=True)
     print(f"Dams loaded:   {len(dams):,} dams")
     return dams
+
+
+def load_reservoirs(river_crs) -> gpd.GeoDataFrame:
+    # Same LCC projection as the rivers, only the WKT name differs; to_crs is a no-op.
+    res = gpd.read_file(RESERVOIR_PATH, engine="pyogrio").to_crs(river_crs)
+    print(f"Reservoirs loaded: {len(res):,} polygons")
+    return res
 
 
 # --------------------------------------------------------------------------- clean
@@ -197,6 +215,79 @@ def clean_dams(dams: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     return d
 
 
+def clean_reservoirs(res: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    r = res.rename(columns={"res_name": "reservoir_name", "river": "river_reported",
+                            "PIC": "dam_ids", "dm_name": "dam_name_reported", "area": "area_ha"})
+    r.insert(0, "reservoir_id", np.arange(1, len(r) + 1))
+    for c in ["reservoir_name", "river_reported", "basin", "dam_ids", "dam_name_reported"]:
+        r[c] = clean_text(r[c])
+    r["basin"] = r["basin"].replace(BASIN_FIXES)
+
+    # 54 polygons self-intersect; buffer(0) repairs them without changing the area meaningfully.
+    bad = ~r.is_valid
+    r.loc[bad, "geometry"] = r.loc[bad, "geometry"].buffer(0)
+
+    # area_ha in the source equals the polygon area exactly, so perimeter is consistent with it.
+    r["area_ha"] = r["area_ha"].round(2)
+    r["area_km2"] = (r["area_ha"] / 100).round(3)
+    r["perimeter_km"] = (r.geometry.length / 1000).round(2)
+    # Shoreline development index: 1 = circle; high values = long, dendritic valley reservoirs.
+    r["shoreline_index"] = (r.geometry.length / (2 * np.sqrt(np.pi * r.geometry.area))).round(2)
+    r["area_class"] = pd.cut(r["area_ha"], [0, 10, 50, 100, 500, 1000, 10_000, np.inf],
+                             labels=["<10 ha", "10-50 ha", "50-100 ha", "100-500 ha", "500-1,000 ha",
+                                     "1,000-10,000 ha", "10,000+ ha"], right=False).astype("string")
+    pt = r.geometry.representative_point().to_crs(WGS84)
+    r["latitude"], r["longitude"] = pt.y.round(6), pt.x.round(6)
+    return r
+
+
+# --------------------------------------------------------------------------- reservoirs <-> dams
+
+def link_reservoirs_to_dams(res: gpd.GeoDataFrame, dams: gpd.GeoDataFrame):
+    """Split the PIC list into a reservoir <-> dam bridge and roll dam attributes up to the reservoir.
+
+    The reservoir takes its state, river and year from its "primary" dam: the one with the most
+    storage (then the tallest). Storage is summed over all its dams.
+    """
+    bridge = (res[["reservoir_id", "dam_ids"]].dropna()
+              .assign(dam_id=lambda x: x["dam_ids"].str.split(","))
+              .explode("dam_id")
+              .assign(dam_id=lambda x: x["dam_id"].str.strip())
+              .query("dam_id != ''")[["reservoir_id", "dam_id"]])
+    bridge["in_dam_register"] = bridge["dam_id"].isin(dams["dam_id"])
+
+    dam_cols = ["dam_id", "dam_name", "state", "district", "river_id", "nearest_river", "river_basin",
+                "completion_year", "decade", "height_m", "gross_storage_mcm", "primary_purpose"]
+    linked = bridge.merge(pd.DataFrame(dams[dam_cols]), on="dam_id")
+    agg = linked.groupby("reservoir_id").agg(
+        dam_count=("dam_id", "count"),
+        storage_mcm=("gross_storage_mcm", lambda s: s.sum(min_count=1)),
+        max_dam_height_m=("height_m", "max"),
+        first_completion_year=("completion_year", "min"))
+    primary = (linked.sort_values(["gross_storage_mcm", "height_m"], ascending=False, na_position="last")
+               .drop_duplicates("reservoir_id").set_index("reservoir_id")
+               [["dam_id", "dam_name", "state", "district", "river_id", "nearest_river", "primary_purpose"]]
+               .rename(columns={"dam_id": "primary_dam_id", "dam_name": "primary_dam_name"}))
+
+    r = res.merge(agg, left_on="reservoir_id", right_index=True, how="left") \
+           .merge(primary, left_on="reservoir_id", right_index=True, how="left")
+    r["dam_count"] = r["dam_count"].fillna(0).astype(int)
+    r["first_completion_year"] = r["first_completion_year"].astype("Int64")
+    r["decade"] = (r["first_completion_year"] // 10 * 10).astype("Int64").astype("string") + "s"
+    r["river_id"] = r["river_id"].astype("Int64")
+    # MCM / km2 = metres. Keep the raw value, blank it where it is physically impossible.
+    r["mean_depth_m_raw"] = (r["storage_mcm"] / r["area_km2"]).round(2)
+    r["depth_suspect"] = ((r["mean_depth_m_raw"] > r["max_dam_height_m"])
+                          | (r["mean_depth_m_raw"] > MAX_PLAUSIBLE_MEAN_DEPTH_M))
+    r["mean_depth_m"] = r["mean_depth_m_raw"].where(~r["depth_suspect"])
+    r["storage_mcm"] = r["storage_mcm"].round(2)
+
+    missing = (~bridge["in_dam_register"]).sum()
+    print(f"Reservoirs linked to dams: {(r['dam_count'] > 0).sum():,} / {len(r):,} "
+          f"({len(bridge):,} dam codes, {missing} not in the dam register)")
+    return r, bridge
+
+
 # --------------------------------------------------------------------------- spatial
 
 def link_dams_to_rivers(dams: gpd.GeoDataFrame, rivers: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -219,7 +310,8 @@ def link_dams_to_rivers(dams: gpd.GeoDataFrame, rivers: gpd.GeoDataFrame) -> gpd
 
 # --------------------------------------------------------------------------- tables
 
-def build_tables(rivers: gpd.GeoDataFrame, dams: gpd.GeoDataFrame) -> dict:
+def build_tables(rivers: gpd.GeoDataFrame, dams: gpd.GeoDataFrame,
+                 reservoirs: gpd.GeoDataFrame, bridge_reservoir_dam: pd.DataFrame) -> dict:
     # Dimension: rivers (no geometry - Power BI cannot import it)
     dam_stats = (dams.dropna(subset=["river_id"]).groupby("river_id")
                  .agg(dam_count=("dam_id", "count"),
@@ -237,8 +329,25 @@ def build_tables(rivers: gpd.GeoDataFrame, dams: gpd.GeoDataFrame) -> dict:
     dim_river["geometry_wkt"] = (rivers.geometry.simplify(250).to_crs(WGS84)
                                  .to_wkt(rounding_precision=5).values)
 
-    # Fact: dams
-    fact_dam = pd.DataFrame(dams.drop(columns="geometry"))
+    # Dimension: reservoirs. WKT for Icon Map at 30 m; the few huge dendritic reservoirs are
+    # simplified harder until they fit Power BI's text limit.
+    dim_reservoir = pd.DataFrame(reservoirs.drop(columns="geometry"))
+    wkt = reservoirs.geometry.simplify(30).to_crs(WGS84).to_wkt(rounding_precision=5)
+    for tol in (100, 250, 500, 1000):
+        long_ = wkt.str.len() > WKT_MAX_CHARS
+        if not long_.any():
+            break
+        wkt[long_] = reservoirs.geometry[long_].simplify(tol).to_crs(WGS84).to_wkt(rounding_precision=5)
+    dim_reservoir["geometry_wkt"] = wkt.values
+
+    # Fact: dams (+ the reservoir each dam holds back, if mapped)
+    fact_dam = pd.DataFrame(dams.drop(columns="geometry")).merge(
+        bridge_reservoir_dam[["dam_id", "reservoir_id"]].merge(
+            dim_reservoir[["reservoir_id", "reservoir_name", "area_ha"]], on="reservoir_id")
+        .rename(columns={"area_ha": "reservoir_area_ha"}),
+        on="dam_id", how="left")
+    fact_dam["reservoir_id"] = fact_dam["reservoir_id"].astype("Int64")
+    fact_dam["has_reservoir_polygon"] = fact_dam["reservoir_id"].notna()
 
     # Bridge: dam <-> purpose (a dam can serve several purposes)
     bridge_dam_purpose = (fact_dam[["dam_id", "purpose"]].dropna()
@@ -267,9 +376,16 @@ def build_tables(rivers: gpd.GeoDataFrame, dams: gpd.GeoDataFrame) -> dict:
         total_storage_mcm=("gross_storage_mcm", "sum"),
         avg_dam_height_m=("height_m", "mean"),
         median_completion_year=("completion_year", "median"))
-    basin_summary = river_basin.join(dam_basin, how="left").fillna(0).reset_index()
+    res_basin = dim_reservoir.groupby("basin").agg(
+        reservoir_count=("reservoir_id", "count"),
+        reservoir_area_km2=("area_km2", "sum"),
+        largest_reservoir_km2=("area_km2", "max"),
+        median_reservoir_ha=("area_ha", "median"))
+    basin_summary = river_basin.join(dam_basin, how="left").join(res_basin, how="left").fillna(0).reset_index()
     basin_summary["dams_per_1000km"] = (basin_summary["dam_count"] / basin_summary["total_river_length_km"] * 1000)
     basin_summary["pct_rivers_dammed"] = basin_summary["rivers_with_dams"] / basin_summary["river_count"] * 100
+    basin_summary["pct_of_reservoir_area"] = (basin_summary["reservoir_area_km2"]
+                                              / basin_summary["reservoir_area_km2"].sum() * 100)
     basin_summary = basin_summary.round(2).sort_values("dam_count", ascending=False)
 
     # State summary
@@ -283,9 +399,13 @@ def build_tables(rivers: gpd.GeoDataFrame, dams: gpd.GeoDataFrame) -> dict:
         tallest_dam_m=("height_m", "max"),
         oldest_dam_year=("completion_year", "min"),
         newest_dam_year=("completion_year", "max"))
-    state_summary = dam_state.join(river_state, how="outer").reset_index().rename(columns={"index": "state"})
-    state_summary[["dam_count", "large_dam_count", "river_count"]] = \
-        state_summary[["dam_count", "large_dam_count", "river_count"]].fillna(0).astype(int)
+    res_state = dim_reservoir.groupby("state").agg(  # state of the reservoir's primary dam
+        reservoir_count=("reservoir_id", "count"), reservoir_area_km2=("area_km2", "sum"))
+    state_summary = (dam_state.join(river_state, how="outer").join(res_state, how="left")
+                     .reset_index().rename(columns={"index": "state"}))
+    state_summary[["dam_count", "large_dam_count", "river_count", "reservoir_count"]] = \
+        state_summary[["dam_count", "large_dam_count", "river_count", "reservoir_count"]].fillna(0).astype(int)
+    state_summary["reservoir_area_km2"] = state_summary["reservoir_area_km2"].fillna(0)
     state_summary = state_summary.round(2).sort_values("dam_count", ascending=False)
 
     # Dams built per decade (time series)
@@ -294,9 +414,36 @@ def build_tables(rivers: gpd.GeoDataFrame, dams: gpd.GeoDataFrame) -> dict:
                            storage_added_mcm=("gross_storage_mcm", "sum"),
                            avg_height_m=("height_m", "mean"))
                       .reset_index().sort_values("decade"))
+    res_decade = dim_reservoir.dropna(subset=["decade"]).groupby("decade").agg(
+        reservoir_area_added_km2=("area_km2", "sum"))
+    decade_summary = decade_summary.merge(res_decade, left_on="decade", right_index=True, how="left")
+    decade_summary["reservoir_area_added_km2"] = decade_summary["reservoir_area_added_km2"].fillna(0)
     decade_summary["cumulative_dams"] = decade_summary["dams_completed"].cumsum()
     decade_summary["cumulative_storage_mcm"] = decade_summary["storage_added_mcm"].cumsum()
+    decade_summary["cumulative_reservoir_area_km2"] = decade_summary["reservoir_area_added_km2"].cumsum()
     decade_summary = decade_summary.round(2)
+
+    # Reservoir size distribution: a few large reservoirs hold most of the water surface
+    reservoir_size_summary = (dim_reservoir.groupby("area_class", sort=False)
+                              .agg(reservoir_count=("reservoir_id", "count"),
+                                   total_area_km2=("area_km2", "sum"),
+                                   total_storage_mcm=("storage_mcm", "sum"),
+                                   median_mean_depth_m=("mean_depth_m", "median"))
+                              .reset_index())
+    order = ["<10 ha", "10-50 ha", "50-100 ha", "100-500 ha", "500-1,000 ha", "1,000-10,000 ha", "10,000+ ha"]
+    reservoir_size_summary = (reservoir_size_summary
+                              .assign(k=lambda x: x["area_class"].map(order.index)).sort_values("k").drop(columns="k"))
+    reservoir_size_summary["pct_of_reservoirs"] = (reservoir_size_summary["reservoir_count"]
+                                                   / len(dim_reservoir) * 100)
+    reservoir_size_summary["pct_of_area"] = (reservoir_size_summary["total_area_km2"]
+                                             / dim_reservoir["area_km2"].sum() * 100)
+    reservoir_size_summary = reservoir_size_summary.round(2)
+
+    top_reservoirs = (dim_reservoir.sort_values("area_ha", ascending=False)
+                      [["reservoir_id", "reservoir_name", "primary_dam_id", "primary_dam_name", "state", "basin", "nearest_river",
+                        "dam_count", "area_km2", "perimeter_km", "shoreline_index", "storage_mcm",
+                        "mean_depth_m", "first_completion_year"]]
+                      .head(50))
 
     # Purpose & type breakdown
     purpose_summary = (bridge_dam_purpose.merge(fact_dam[["dam_id", "gross_storage_mcm", "height_m"]], on="dam_id")
@@ -319,7 +466,7 @@ def build_tables(rivers: gpd.GeoDataFrame, dams: gpd.GeoDataFrame) -> dict:
 
     # Data quality report - useful as a "notes" page in the report
     dq = []
-    for name, df in [("dim_river", dim_river), ("fact_dam", fact_dam)]:
+    for name, df in [("dim_river", dim_river), ("fact_dam", fact_dam), ("dim_reservoir", dim_reservoir)]:
         for c in df.columns:
             dq.append({"table": name, "column": c, "rows": len(df),
                        "missing": int(df[c].isna().sum()),
@@ -338,13 +485,17 @@ def build_tables(rivers: gpd.GeoDataFrame, dams: gpd.GeoDataFrame) -> dict:
         "purpose_summary": purpose_summary,
         "dam_type_summary": dam_type_summary,
         "top_dammed_rivers": top_dammed_rivers,
+        "dim_reservoir": dim_reservoir,
+        "bridge_reservoir_dam": bridge_reservoir_dam,
+        "reservoir_size_summary": reservoir_size_summary,
+        "top_reservoirs": top_reservoirs,
         "data_quality": data_quality,
     }
 
 
 # --------------------------------------------------------------------------- export
 
-def export(tables: dict, rivers: gpd.GeoDataFrame) -> None:
+def export(tables: dict, rivers: gpd.GeoDataFrame, reservoirs: gpd.GeoDataFrame) -> None:
     # Parquet is optional: it needs pyarrow (pip install pyarrow). CSV always works.
     try:
         import pyarrow  # noqa: F401
@@ -370,6 +521,13 @@ def export(tables: dict, rivers: gpd.GeoDataFrame) -> None:
     geo["geometry"] = geo.geometry.simplify(250)  # metres
     geo.to_crs(WGS84).to_file(OUT_DIR / "rivers_map_layer.geojson", driver="GeoJSON")
     print(f"  rivers_map_layer.geojson  {len(geo):,} features")
+
+    res = reservoirs[["reservoir_id", "reservoir_name", "basin", "state", "area_ha", "dam_count",
+                      "storage_mcm", "geometry"]].copy()
+    res["geometry"] = res.geometry.simplify(30)  # metres
+    res.to_crs(WGS84).to_file(OUT_DIR / "reservoirs_map_layer.geojson", driver="GeoJSON",
+                              COORDINATE_PRECISION=5)  # ~1 m
+    print(f"  reservoirs_map_layer.geojson  {len(res):,} features")
     print(f"\nExported to: {OUT_DIR}")
 
 
@@ -392,10 +550,27 @@ def print_insights(t: dict) -> None:
     peak = t["decade_summary"].sort_values("dams_completed").iloc[-1]
     print(f"Peak construction decade: {peak['decade']} ({int(peak['dams_completed'])} dams)")
 
+    res = t["dim_reservoir"]
+    big = res.nlargest(max(1, len(res) // 100), "area_ha")
+    print(f"Reservoirs: {len(res):,} polygons, {res['area_km2'].sum():,.0f} km2 water surface, "
+          f"median {res['area_ha'].median():.0f} ha; {(res['dam_count'] > 1).sum()} held by several dams")
+    print(f"  Largest 1% ({len(big)}) hold {big['area_km2'].sum() / res['area_km2'].sum():.0%} of the area; "
+          f"largest: " + ", ".join(f"{n} ({a:,.0f} km2)" for n, a in
+                                   res.nlargest(3, "area_ha")[["reservoir_name", "area_km2"]].values))
+    top_b = t["basin_summary"].sort_values("reservoir_area_km2", ascending=False).head(3)
+    print("  Top basins by reservoir area: " + ", ".join(
+        f"{b} ({p:.0f}%)" for b, p in top_b[["basin", "pct_of_reservoir_area"]].values))
+    print(f"  Median mean depth (storage / area): {res['mean_depth_m'].median():.1f} m; "
+          f"{int(res['depth_suspect'].sum())} flagged deeper than their dam (fragment polygons)")
+    no_poly = ~t["fact_dam"]["has_reservoir_polygon"]
+    print(f"  Dams without a mapped reservoir: {no_poly.sum():,} / {len(no_poly):,}")
+
 
 rivers_gdf = clean_rivers(load_rivers())
 dams_gdf = link_dams_to_rivers(clean_dams(load_dams(rivers_gdf.crs)), rivers_gdf)
-tables = build_tables(rivers_gdf, dams_gdf)
+reservoirs_gdf, bridge_reservoir_dam = link_reservoirs_to_dams(
+    clean_reservoirs(load_reservoirs(rivers_gdf.crs)), dams_gdf)
+tables = build_tables(rivers_gdf, dams_gdf, reservoirs_gdf, bridge_reservoir_dam)
 
 # Expose each table as a top-level DataFrame so Power BI's Python connector can pick them up.
 dim_river = tables["dim_river"]
@@ -408,12 +583,15 @@ decade_summary = tables["decade_summary"]
 purpose_summary = tables["purpose_summary"]
 dam_type_summary = tables["dam_type_summary"]
 top_dammed_rivers = tables["top_dammed_rivers"]
+dim_reservoir = tables["dim_reservoir"]
+reservoir_size_summary = tables["reservoir_size_summary"]
+top_reservoirs = tables["top_reservoirs"]
 data_quality = tables["data_quality"]
 
 if __name__ == "__main__":
     print_insights(tables)
     print("\nExporting...")
-    export(tables, rivers_gdf)
+    export(tables, rivers_gdf, reservoirs_gdf)
 
 # GeoDataFrames are not importable by Power BI; drop them from the namespace.
-del rivers_gdf, dams_gdf
+del rivers_gdf, dams_gdf, reservoirs_gdf
