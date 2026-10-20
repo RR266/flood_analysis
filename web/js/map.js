@@ -348,6 +348,15 @@ export function createMap(container, opts = {}) {
         if (map.getLayer("rivers-flow")) map.setFilter("rivers-flow", expr ? ["all", expr, state.flowFilter] : state.flowFilter);
       });
     },
+    /** ids: reservoir ids to show (null = all) */
+    setReservoirFilter(ids) {
+      const expr = ids ? ["in", ["get", "id"], ["literal", ids]] : null;
+      ready.then(() => {
+        if (!map.getLayer("reservoirs-fill")) return;
+        ["reservoirs-fill", "reservoirs-outline"].forEach((l) => map.setFilter(l, expr));
+        setHoverReservoir(null);
+      });
+    },
     setFlow(on) {
       state.flowOn = on;
       ready.then(() => {

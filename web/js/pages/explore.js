@@ -63,11 +63,14 @@ export async function render(root, route) {
       <div class="card map-card">
         <div class="map" id="explore-map"></div>
         <div class="focus-bar" id="focus-bar" role="status" hidden></div>
-        <div class="map-tools" role="group" aria-label="Map layers">
-          <button class="btn sm" type="button" data-layer="rivers" aria-pressed="true">${raw(icon("river"))} Rivers</button>
-          <button class="btn sm" type="button" data-layer="flow" aria-pressed="true">${raw(icon("play"))} Flow</button>
-          <button class="btn sm" type="button" data-layer="dams" aria-pressed="true">${raw(icon("dam"))} Dams</button>
-          <button class="btn sm" type="button" data-layer="reservoirs" aria-pressed="true">${raw(icon("storage"))} Reservoirs</button>
+        <details class="map-legend map-layers" open>
+          <summary class="title">Map layers</summary>
+          <div class="layer-rows" role="group" aria-label="Map layers">
+            ${[["rivers", "river", "Rivers"], ["flow", "play", "Flow"], ["dams", "dam", "Dams"], ["reservoirs", "storage", "Reservoirs"]].map(([k, ic, label]) =>
+              html`<label class="row"><input type="checkbox" data-layer="${k}" checked>${raw(icon(ic))}${label}</label>`)}
+          </div>
+        </details>
+        <div class="map-tools">
           <button class="btn sm" type="button" id="fit">${raw(icon("fit"))} Fit to results</button>
         </div>
         <details class="map-legend" open>
@@ -118,12 +121,10 @@ export async function render(root, route) {
     onRiverClick: (p) => { const r = rivers.byId.get(p.id); if (r) selectRiver(r); },
   });
   cleanups.push(() => mapCtl.destroy());
-  if (!mapCtl.flowOn) $('[data-layer="flow"]').setAttribute("aria-pressed", "false");
+  if (!mapCtl.flowOn) $('[data-layer="flow"]').checked = false;
 
-  root.querySelectorAll("[data-layer]").forEach((b) => b.addEventListener("click", () => {
-    const on = b.getAttribute("aria-pressed") !== "true";
-    b.setAttribute("aria-pressed", String(on));
-    if (b.dataset.layer === "flow") mapCtl.setFlow(on); else mapCtl.setVisible(b.dataset.layer, on);
+  root.querySelectorAll("[data-layer]").forEach((b) => b.addEventListener("change", () => {
+    if (b.dataset.layer === "flow") mapCtl.setFlow(b.checked); else mapCtl.setVisible(b.dataset.layer, b.checked);
   }));
   $("#fit").addEventListener("click", () => fitResults());
 
@@ -169,6 +170,9 @@ export async function render(root, route) {
 
     // map
     mapCtl.setDams(viewDams);
+    // reservoirs follow the dams on screen: only those held back by a shown dam
+    mapCtl.setReservoirFilter(ui.sel || anyFilter()
+      ? [...new Set(viewDams.map((d) => d.reservoir_id).filter((id) => id != null))] : null);
     if (ui.sel) {
       mapCtl.setRiverFilter(["==", ["get", "id"], fr ? fr.id : -1], 0);
     } else {
@@ -197,7 +201,11 @@ export async function render(root, route) {
     const what = d ? html`<strong>${d.name}</strong>${fr ? html` on the <strong>${fr.name}</strong>` : " (not linked to a river)"}`
       : html`<strong>${fr?.name || "River"}</strong>`;
     mount(bar, html`<span>${raw(icon("target"))} Showing only ${what} · ${plural(viewDams.length, "dam")}</span>
-      <button class="btn sm" type="button" id="focus-clear">${raw(icon("reset"))} Show everything</button>`);
+      <span class="focus-actions">
+        <button class="btn sm" type="button" id="focus-deselect" title="Clear the selection and keep the current map view">✕ Clear selection</button>
+        <button class="btn sm" type="button" id="focus-clear" title="Clear the selection and zoom out to everything">${raw(icon("reset"))} Show everything</button>
+      </span>`);
+    bar.querySelector("#focus-deselect").addEventListener("click", () => clearSelection({ fit: false }));
     bar.querySelector("#focus-clear").addEventListener("click", () => clearSelection());
   }
 
@@ -363,11 +371,12 @@ export async function render(root, route) {
     mapCtl.selectDam(null, { fly: false });
   };
 
-  function clearSelection() {
+  // fit: false keeps the current map view (the "Clear selection" button)
+  function clearSelection({ fit = true } = {}) {
     if (!ui.sel) return;
     ui.sel = null;
     hideCard();
-    apply({ fit: true });
+    apply({ fit });
     markActive();
   }
 

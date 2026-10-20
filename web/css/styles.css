@@ -403,6 +403,14 @@ details.map-legend:not([open]) summary::after { content: "▸"; }
 .map-legend .line { width: 22px; height: 3px; border-radius: 2px; background: var(--series-1); }
 .map-legend .flow { width: 22px; height: 4px; border-radius: 2px; background: linear-gradient(90deg, var(--series-1) 10%, #e8f1fd 75%, var(--series-1) 80%); }
 .map-legend .title { font-weight: 600; color: var(--text-primary); }
+/* "Map layers" box: same look as the legend, bottom-right above the scale bar */
+.map-legend.map-layers { left: auto; right: 12px; bottom: 56px; }
+.layer-rows { display: grid; gap: 4px; margin-top: 8px; }
+.map-layers .row { cursor: pointer; padding: 3px 4px; border-radius: 6px; user-select: none; }
+.map-layers .row:hover { background: var(--accent-wash); color: var(--text-primary); }
+.map-layers .row svg { width: 16px; height: 16px; color: var(--accent); }
+.map-layers input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; cursor: pointer; }
+.map-layers input:not(:checked) ~ svg { color: var(--text-muted); }
 .map-legend .water { width: 18px; height: 12px; border-radius: 4px; background: color-mix(in srgb, var(--series-1) 50%, transparent); border: 1px solid var(--series-1); }
 
 .side-panel { display: grid; gap: 16px; }
@@ -592,7 +600,7 @@ details.map-legend:not([open]) summary::after { content: "▸"; }
   .hero-legend { display: none; }
   .card-head { flex-wrap: wrap; }
   .card-actions { flex-wrap: wrap; }
-  .map-legend { display: none; }
+  .map-legend:not(.map-layers) { display: none; }
 }
 @media (max-width: 560px) {
   .brand-text small { display: none; }
