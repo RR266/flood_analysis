@@ -30,4 +30,10 @@ export const CREDITS = [
     url: "https://cwc.gov.in",
     note: "dam.geojson: 6,644 dams",
   },
+  {
+    label: "Reservoirs",
+    source: "National Water Data Portal - reservoir layer (National Water Informatics Centre, Ministry of Jal Shakti)",
+    url: "https://nwdp.nwic.gov.in/dataset/reservoir",
+    note: "Reservoir shapefile: 6,152 reservoir outlines",
+  },
 ];

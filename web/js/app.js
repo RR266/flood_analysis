@@ -6,9 +6,10 @@ import { attachAutocomplete, hrefFor } from "./search.js";
 import * as overview from "./pages/overview.js";
 import * as explore from "./pages/explore.js";
 import * as details from "./pages/details.js";
+import * as about from "./pages/about.js";
 
 const app = document.getElementById("app");
-const PAGES = { overview, explore, details };
+const PAGES = { overview, explore, details, about };
 let cleanup = null;
 const visited = new Set();
 

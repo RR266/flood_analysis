@@ -642,3 +642,13 @@ details.map-legend:not([open]) summary::after { content: "▸"; }
 .ac-icon { width: 24px; height: 24px; flex-shrink: 0; display: grid; place-items: center; color: var(--accent); }
 .ac-icon svg { width: 18px; height: 18px; }
 .ac-option .meta { color: var(--text-muted); font-size: 12px; margin-left: auto; text-align: right; flex-shrink: 0; line-height: 1.3; }
+
+/* ---------------------------------------------------------- about page */
+.about .phase { display: grid; align-content: start; gap: 10px; }
+.about .phase.current { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-wash); }
+.about .phase-top { display: flex; align-items: center; justify-content: space-between; }
+.about .phase h3 { display: flex; align-items: center; gap: 8px; font-size: 18px; }
+.about .phase h3 svg { width: 20px; height: 20px; color: var(--accent); flex-shrink: 0; }
+.about .phase > p { color: var(--text-secondary); }
+.about .story-num svg { width: 22px; height: 22px; }
+.about .notes li { margin: 6px 0; }
