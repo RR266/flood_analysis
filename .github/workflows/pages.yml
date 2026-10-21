@@ -1,0 +1,43 @@
+# Publishes the web/ folder to GitHub Pages: https://rr266.github.io/flood_analysis/
+# web/js/secrets.js is git-ignored, so it is written here from the MAPBOX_TOKEN repository secret.
+name: Deploy site to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["web/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:   # "Run workflow" button in the Actions tab
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write Mapbox token
+        env:
+          MAPBOX_TOKEN: ${{ secrets.MAPBOX_TOKEN }}
+        run: |
+          test -n "$MAPBOX_TOKEN" || { echo "::error::Add the MAPBOX_TOKEN repository secret first"; exit 1; }
+          printf 'export const MAPBOX_TOKEN = "%s";\n' "$MAPBOX_TOKEN" > web/js/secrets.js
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
